@@ -18,19 +18,12 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
 
     public GoogleGmailAttachmentClient(
         GmailServiceFactory serviceFactory,
-        GmailApiRetryPolicy retryPolicy)
-        : this(serviceFactory, retryPolicy, "me")
-    {
-    }
-
-    public GoogleGmailAttachmentClient(
-        GmailServiceFactory serviceFactory,
         GmailApiRetryPolicy retryPolicy,
-        string userId)
+        GmailAuthenticationOptions options)
     {
         _serviceFactory = serviceFactory;
         _retryPolicy = retryPolicy;
-        _userId = userId;
+        _userId = options.UserId;
     }
 
     public async Task<Stream> OpenAttachmentAsync(

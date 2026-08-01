@@ -21,21 +21,13 @@ public sealed class GoogleGmailClient : IEmailClient
     public GoogleGmailClient(
         GmailServiceFactory serviceFactory,
         IGmailMessageMapper mapper,
-        GmailApiRetryPolicy retryPolicy)
-        : this(serviceFactory, mapper, retryPolicy, "me")
-    {
-    }
-
-    public GoogleGmailClient(
-        GmailServiceFactory serviceFactory,
-        IGmailMessageMapper mapper,
         GmailApiRetryPolicy retryPolicy,
-        string userId)
+        GmailAuthenticationOptions options)
     {
         _serviceFactory = serviceFactory;
         _mapper = mapper;
         _retryPolicy = retryPolicy;
-        _userId = userId;
+        _userId = options.UserId;
     }
 
     public async Task<EmailSearchResult> SearchAsync(

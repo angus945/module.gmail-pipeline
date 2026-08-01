@@ -10,6 +10,8 @@ public sealed class GmailAuthenticationOptions
 
     public string UserKey { get; set; } = "default";
 
+    public string UserId { get; set; } = "me";
+
     public IReadOnlyList<string> Scopes { get; set; } =
     [
         GmailService.Scope.GmailReadonly
