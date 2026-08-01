@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Gmail-Pipeline.Core.Test/Gmail-Pipeline.Core.Test.csproj" />
+  <Project Path="Gmail-Pipeline.Core/Gmail-Pipeline.Core.csproj" />
+  <Project Path="Gmail-Pipeline.Google.Test/Gmail-Pipeline.Google.Test.csproj" />
+  <Project Path="Gmail-Pipeline.Google/Gmail-Pipeline.Google.csproj" />
+</Solution>
