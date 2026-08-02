@@ -35,6 +35,14 @@ var page = await reader.SearchAsync(new EmailSearchRequest
 
 `AddGmailPipelineGoogleReadOnly` forces the `gmail.readonly` scope and only registers `IEmailReader` plus `IEmailAttachmentClient`.
 
+## MIME Model
+
+`EmailMessage.TextBody` and `EmailMessage.HtmlBody` are convenience projections for the first top-level plain and HTML body representations. The full ordered top-level body list is available in `EmailMessage.BodySections`.
+
+Composite MIME entities, including `multipart/*` attachments and encapsulated `message/rfc822` messages, are represented as `EmailAttachment` values with `Kind`, `BodySections`, and `Children`. Their inner body parts are not merged into the parent message body, and their child attachments are not promoted into the parent attachment list.
+
+`IEmailAttachmentClient.OpenAttachmentAsync` opens embedded, external, and provider-addressable leaf attachments. Structural composite attachments that Gmail does not expose as a single bounded byte part throw `EmailCompositeAttachmentException`; callers should inspect their `BodySections` and `Children` instead.
+
 ## Label Modify Usage
 
 ```csharp
@@ -60,7 +68,7 @@ Read-only and modify tokens are stored under different client/user/scope namespa
 
 ## Content Limits
 
-Gmail messages are preflighted with `format=METADATA` before `format=FULL`. The reader parses text bodies and attachment metadata, but large attachment bytes are lazy and are not stored in `EmailMessage.Attachments` during `IEmailReader.GetAsync`.
+Gmail messages are preflighted with `format=METADATA` before `format=FULL`. The supported parser is the bounded Gmail `MessagePart` reader used by `IEmailReader`; the legacy unbounded RAW `MimeMessage` parser is not registered by DI. The reader parses text bodies and attachment metadata, but large attachment bytes are lazy and are not stored in `EmailMessage.Attachments` during `IEmailReader.GetAsync`.
 
 Default resource limits:
 

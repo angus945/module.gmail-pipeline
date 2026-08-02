@@ -29,7 +29,16 @@ public sealed class GmailMessageMapperTests
                 ]
             }
         };
-        var parsedMime = new GmailMimeParseResult("Statement", null, []);
+        var parsedMime = new GmailMimeParseResult(
+            "Statement",
+            null,
+            [],
+            [new GmailPipeline.Core.Models.EmailBodySection
+            {
+                MediaType = "text/plain",
+                Content = "Statement",
+                PartPath = "0.0"
+            }]);
 
         var mapped = new GmailMessageMapper().Map(message, parsedMime);
 
@@ -40,6 +49,7 @@ public sealed class GmailMessageMapperTests
         mapped.To.Should().ContainSingle(address => address.Address == "me@example.test");
         mapped.Subject.Should().Be("Statement");
         mapped.TextBody.Should().Be("Statement");
+        mapped.BodySections.Should().ContainSingle(section => section.PartPath == "0.0");
         mapped.Headers["subject"].Should().Be("Statement");
         mapped.Headers.GetValues("x-duplicate").Should().Equal("one", "two");
         mapped.LabelIds.Should().Equal("INBOX");

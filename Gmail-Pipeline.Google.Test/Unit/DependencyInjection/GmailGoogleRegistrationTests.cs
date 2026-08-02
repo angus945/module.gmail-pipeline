@@ -27,6 +27,7 @@ public sealed class GmailGoogleRegistrationTests
         provider.GetService<IEmailAttachmentClient>().Should().NotBeNull();
         provider.GetService<IEmailLabelClient>().Should().BeNull();
         provider.GetRequiredService<GmailAuthenticationOptions>().Scopes.Should().Equal(GmailService.Scope.GmailReadonly);
+        services.Any(IsLegacyMimeParserRegistration).Should().BeFalse();
     }
 
     [Fact]
@@ -47,4 +48,8 @@ public sealed class GmailGoogleRegistrationTests
         provider.GetService<IEmailLabelClient>().Should().NotBeNull();
         provider.GetRequiredService<GmailAuthenticationOptions>().Scopes.Should().Equal(GmailService.Scope.GmailModify);
     }
+
+    private static bool IsLegacyMimeParserRegistration(ServiceDescriptor descriptor) =>
+        descriptor.ServiceType.FullName == "GmailPipeline.Google.Mime.GmailMimeParser"
+        || descriptor.ImplementationType is { FullName: "GmailPipeline.Google.Mime.GmailMimeParser" };
 }

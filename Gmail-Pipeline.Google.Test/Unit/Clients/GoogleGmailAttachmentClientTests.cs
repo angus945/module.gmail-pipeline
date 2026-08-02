@@ -115,6 +115,63 @@ public sealed class GoogleGmailAttachmentClientTests
     }
 
     [Fact]
+    public async Task OpenAttachmentAsyncRejectsStructuralCompositeAttachment()
+    {
+        var messageClient = new FakeMessageClient();
+        var client = CreateClient(messageClient);
+        var attachment = CreateAttachment() with
+        {
+            Kind = EmailAttachmentKind.Composite,
+            Children = [CreateAttachment() with { Id = "0.0.0", PartPath = "0.0.0" }]
+        };
+
+        var act = async () => await client.OpenAttachmentAsync("message-1", attachment);
+
+        await act.Should().ThrowAsync<EmailCompositeAttachmentException>();
+        messageClient.RequestedFormats.Should().BeEmpty();
+        messageClient.GetAttachmentCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsyncFindsProviderPartByGooglePartId()
+    {
+        var messageClient = new FakeMessageClient
+        {
+            Message = new Message
+            {
+                Id = "message-1",
+                Payload = new MessagePart
+                {
+                    MimeType = "multipart/mixed",
+                    Parts =
+                    [
+                        new MessagePart
+                        {
+                            PartId = "gmail-part-1",
+                            MimeType = "application/pdf",
+                            Body = new MessagePartBody
+                            {
+                                Data = Encode("pdf"),
+                                Size = 3
+                            }
+                        }
+                    ]
+                }
+            }
+        };
+        var client = CreateClient(messageClient);
+        var attachment = CreateAttachment() with
+        {
+            ProviderPartId = "gmail-part-1"
+        };
+
+        await using var stream = await client.OpenAttachmentAsync("message-1", attachment);
+        using var reader = new StreamReader(stream);
+
+        (await reader.ReadToEndAsync()).Should().Be("pdf");
+    }
+
+    [Fact]
     public async Task OpenAttachmentAsyncRejectsExternalAttachmentResponseAboveConfiguredLimit()
     {
         var messageClient = new FakeMessageClient();

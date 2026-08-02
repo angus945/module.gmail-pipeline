@@ -10,6 +10,8 @@ public sealed record EmailAttachment
 
     public ReadOnlyMemory<byte>? EmbeddedContent { get; init; }
 
+    public EmailAttachmentKind Kind { get; init; } = EmailAttachmentKind.Binary;
+
     public string? FileName { get; init; }
 
     public required string MediaType { get; init; }
@@ -22,7 +24,12 @@ public sealed record EmailAttachment
 
     public required string PartPath { get; init; }
 
+    public IReadOnlyList<EmailBodySection> BodySections { get; init; } = [];
+
+    public IReadOnlyList<EmailAttachment> Children { get; init; } = [];
+
     public bool HasEmbeddedContent => EmbeddedContent.HasValue;
 
-    public bool IsInline => Disposition == EmailAttachmentDisposition.Inline;
+    public bool IsInline => Disposition == EmailAttachmentDisposition.Inline
+        || Kind == EmailAttachmentKind.InlineResource;
 }

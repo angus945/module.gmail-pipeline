@@ -24,6 +24,8 @@ public sealed record EmailMessage
 
     public string? HtmlBody { get; init; }
 
+    public IReadOnlyList<EmailBodySection> BodySections { get; init; } = [];
+
     public IReadOnlyList<EmailAttachment> Attachments { get; init; } = [];
 
     public EmailHeaderCollection Headers { get; init; } = new([]);

@@ -14,6 +14,12 @@ namespace GmailPipeline.Google.Test.Unit.Mime;
 public sealed class GmailMessagePartReaderTests
 {
     [Fact]
+    public void Base64UrlDecoderHandlesMissingPaddingAndUrlAlphabet()
+    {
+        Base64UrlDecoder.DecodeUtf8("SGVsbG8td29ybGQ").Should().Be("Hello-world");
+    }
+
+    [Fact]
     public async Task ParseAsyncDoesNotPopulateEmbeddedContentForLargeExternalAttachment()
     {
         var reader = CreateReader();

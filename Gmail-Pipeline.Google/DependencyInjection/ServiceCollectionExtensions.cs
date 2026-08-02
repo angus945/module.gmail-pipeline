@@ -80,7 +80,6 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IGmailMessageClient, GoogleGmailMessageClient>();
         services.TryAddSingleton<IGmailMessagePartReader, GmailMessagePartReader>();
         services.TryAddSingleton<IEmailCharsetResolver, DefaultEmailCharsetResolver>();
-        services.TryAddSingleton<GmailMimeParser>();
         services.TryAddSingleton<IGmailMessageMapper, GmailMessageMapper>();
     }
 }

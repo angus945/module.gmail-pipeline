@@ -35,42 +35,74 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         CancellationToken cancellationToken = default)
     {
         var state = new ParseState();
-        await ReadPartAsync(messageId, root, "0", depth: 1, state, cancellationToken).ConfigureAwait(false);
-        return new GmailMimeParseResult(state.TextBody, state.HtmlBody, state.Attachments);
+        var context = new MimeTraversalContext(MimeContainerKind.Root, Depth: 1);
+        await ReadPartAsync(
+            messageId,
+            root,
+            "0",
+            context,
+            state,
+            state.Attachments,
+            state.BodySections,
+            cancellationToken).ConfigureAwait(false);
+
+        return new GmailMimeParseResult(state.TextBody, state.HtmlBody, state.Attachments, state.BodySections);
     }
 
     private async Task ReadPartAsync(
         string messageId,
         GmailMessagePart part,
         string path,
-        int depth,
+        MimeTraversalContext context,
         ParseState state,
+        IList<EmailAttachment> attachmentSink,
+        IList<EmailBodySection> bodySectionSink,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        state.CountPart(path, depth, _limits);
+        state.CountPart(path, context.Depth, _limits);
 
-        if (IsExplicitAttachment(part))
+        var mimeType = GetEffectiveMimeType(part, context);
+        if (ShouldTreatAsAttachment(part, mimeType))
         {
-            state.AddAttachment(CreateAttachment(part, path, state), _limits);
+            var attachment = await CreateAttachmentAsync(
+                messageId,
+                part,
+                path,
+                mimeType,
+                DetermineAttachmentKind(part, mimeType),
+                context,
+                state,
+                cancellationToken).ConfigureAwait(false);
+            state.AddAttachment(attachmentSink, attachment, _limits);
             return;
         }
 
-        if (IsTextPart(part, "text/plain"))
+        if (IsTextPart(mimeType, "text/plain") || IsTextPart(mimeType, "text/html"))
         {
-            state.TextBody ??= await ReadTextAsync(messageId, part, path, cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        if (IsTextPart(part, "text/html"))
-        {
-            state.HtmlBody ??= await ReadTextAsync(messageId, part, path, cancellationToken).ConfigureAwait(false);
+            var section = new EmailBodySection
+            {
+                MediaType = mimeType,
+                Content = await ReadTextAsync(messageId, part, path, mimeType, cancellationToken).ConfigureAwait(false),
+                PartPath = path,
+                ContentId = NormalizeContentId(GetHeader(part, "Content-ID"))
+            };
+            state.AddBodySection(bodySectionSink, section);
             return;
         }
 
         if (IsInlineResource(part))
         {
-            state.AddAttachment(CreateAttachment(part, path, state), _limits);
+            var attachment = await CreateAttachmentAsync(
+                messageId,
+                part,
+                path,
+                mimeType,
+                EmailAttachmentKind.InlineResource,
+                context,
+                state,
+                cancellationToken).ConfigureAwait(false);
+            state.AddAttachment(attachmentSink, attachment, _limits);
             return;
         }
 
@@ -79,9 +111,18 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             return;
         }
 
+        var childContext = context.Enter(GetContainerKind(mimeType));
         for (var index = 0; index < part.Parts.Count; index++)
         {
-            await ReadPartAsync(messageId, part.Parts[index], $"{path}.{index}", depth + 1, state, cancellationToken).ConfigureAwait(false);
+            await ReadPartAsync(
+                messageId,
+                part.Parts[index],
+                $"{path}.{index}",
+                childContext,
+                state,
+                attachmentSink,
+                bodySectionSink,
+                cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -89,6 +130,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         string messageId,
         GmailMessagePart part,
         string path,
+        string mimeType,
         CancellationToken cancellationToken)
     {
         var body = part.Body;
@@ -98,7 +140,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         }
 
         var data = body.Data;
-        var resource = $"{part.MimeType ?? "text"} body at {path}";
+        var resource = $"{mimeType} body at {path}";
         if (data is null && !string.IsNullOrWhiteSpace(body.AttachmentId))
         {
             EnsureWithinLimit(resource, ToNullableLong(body.Size), _limits.MaxTextBodyBytes);
@@ -125,7 +167,15 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         }
     }
 
-    private EmailAttachment CreateAttachment(GmailMessagePart part, string path, ParseState state)
+    private async Task<EmailAttachment> CreateAttachmentAsync(
+        string messageId,
+        GmailMessagePart part,
+        string path,
+        string mimeType,
+        EmailAttachmentKind kind,
+        MimeTraversalContext context,
+        ParseState state,
+        CancellationToken cancellationToken)
     {
         var body = part.Body;
         var size = ToNullableLong(body?.Size);
@@ -141,11 +191,34 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         }
         else if (data is not null)
         {
-            providerPartId = path;
+            providerPartId = FirstNonBlank(part.PartId, path);
         }
-        else if (string.IsNullOrWhiteSpace(body?.AttachmentId) && size == 0)
+        else if (kind is EmailAttachmentKind.Binary or EmailAttachmentKind.InlineResource
+            && string.IsNullOrWhiteSpace(body?.AttachmentId)
+            && size == 0)
         {
             embeddedContent = ReadOnlyMemory<byte>.Empty;
+        }
+
+        var childAttachments = new List<EmailAttachment>();
+        var childBodySections = new List<EmailBodySection>();
+        if (part.Parts is not null)
+        {
+            var childContext = context
+                .Enter(GetContainerKind(mimeType))
+                .InsideAttachment(kind == EmailAttachmentKind.EncapsulatedMessage);
+            for (var index = 0; index < part.Parts.Count; index++)
+            {
+                await ReadPartAsync(
+                    messageId,
+                    part.Parts[index],
+                    $"{path}.{index}",
+                    childContext,
+                    state,
+                    childAttachments,
+                    childBodySections,
+                    cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return new EmailAttachment
@@ -154,12 +227,15 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             ExternalContentId = string.IsNullOrWhiteSpace(body?.AttachmentId) ? null : body.AttachmentId,
             ProviderPartId = providerPartId,
             EmbeddedContent = embeddedContent,
+            Kind = kind,
             FileName = FirstNonBlank(part.Filename, GetContentTypeParameter(part, "name")),
-            MediaType = part.MimeType ?? "application/octet-stream",
+            MediaType = mimeType,
             ContentId = NormalizeContentId(GetHeader(part, "Content-ID")),
             Disposition = GetDisposition(part),
             Size = size,
-            PartPath = path
+            PartPath = path,
+            BodySections = childBodySections,
+            Children = childAttachments
         };
     }
 
@@ -170,20 +246,33 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             return size.Value <= _limits.MaxEmbeddedAttachmentBytes;
         }
 
-        var padding = (4 - data.Length % 4) % 4;
         return GetMaximumDecodedByteCount(data, null) <= _limits.MaxEmbeddedAttachmentBytes + 2;
     }
 
-    private static bool IsTextPart(GmailMessagePart part, string mimeType) =>
-        string.Equals(part.MimeType, mimeType, StringComparison.OrdinalIgnoreCase);
+    private static bool ShouldTreatAsAttachment(GmailMessagePart part, string mimeType) =>
+        IsExplicitAttachment(part)
+        || string.Equals(mimeType, "message/rfc822", StringComparison.OrdinalIgnoreCase);
+
+    private static EmailAttachmentKind DetermineAttachmentKind(GmailMessagePart part, string mimeType)
+    {
+        if (string.Equals(mimeType, "message/rfc822", StringComparison.OrdinalIgnoreCase))
+        {
+            return EmailAttachmentKind.EncapsulatedMessage;
+        }
+
+        if (IsMultipart(mimeType) || part.Parts is { Count: > 0 })
+        {
+            return EmailAttachmentKind.Composite;
+        }
+
+        return IsInlineResource(part) ? EmailAttachmentKind.InlineResource : EmailAttachmentKind.Binary;
+    }
+
+    private static bool IsTextPart(string actualMimeType, string expectedMimeType) =>
+        string.Equals(actualMimeType, expectedMimeType, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExplicitAttachment(GmailMessagePart part)
     {
-        if (part.Parts is not null && part.Parts.Count > 0 && !IsAttachedMessage(part))
-        {
-            return false;
-        }
-
         var disposition = GetDispositionToken(part);
         return string.Equals(disposition, "attachment", StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrWhiteSpace(part.Filename)
@@ -192,21 +281,58 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 
     private static bool IsInlineResource(GmailMessagePart part)
     {
-        if (part.Parts is not null && part.Parts.Count > 0 && !IsAttachedMessage(part))
-        {
-            return false;
-        }
-
         var disposition = GetDispositionToken(part);
         return string.Equals(disposition, "inline", StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrWhiteSpace(GetHeader(part, "Content-ID"));
     }
 
-    private static bool IsAttachedMessage(GmailMessagePart part) =>
-        string.Equals(part.MimeType, "message/rfc822", StringComparison.OrdinalIgnoreCase)
-        && (!string.IsNullOrWhiteSpace(GetDispositionToken(part))
-            || !string.IsNullOrWhiteSpace(part.Filename)
-            || !string.IsNullOrWhiteSpace(GetContentTypeParameter(part, "name")));
+    private static string GetEffectiveMimeType(GmailMessagePart part, MimeTraversalContext context)
+    {
+        if (!string.IsNullOrWhiteSpace(part.MimeType))
+        {
+            return part.MimeType;
+        }
+
+        if (context.ContainerKind == MimeContainerKind.Digest)
+        {
+            return "message/rfc822";
+        }
+
+        return "application/octet-stream";
+    }
+
+    private static MimeContainerKind GetContainerKind(string mimeType)
+    {
+        if (string.Equals(mimeType, "multipart/mixed", StringComparison.OrdinalIgnoreCase))
+        {
+            return MimeContainerKind.Mixed;
+        }
+
+        if (string.Equals(mimeType, "multipart/alternative", StringComparison.OrdinalIgnoreCase))
+        {
+            return MimeContainerKind.Alternative;
+        }
+
+        if (string.Equals(mimeType, "multipart/related", StringComparison.OrdinalIgnoreCase))
+        {
+            return MimeContainerKind.Related;
+        }
+
+        if (string.Equals(mimeType, "multipart/digest", StringComparison.OrdinalIgnoreCase))
+        {
+            return MimeContainerKind.Digest;
+        }
+
+        if (string.Equals(mimeType, "message/rfc822", StringComparison.OrdinalIgnoreCase))
+        {
+            return MimeContainerKind.EncapsulatedMessage;
+        }
+
+        return MimeContainerKind.Other;
+    }
+
+    private static bool IsMultipart(string mimeType) =>
+        mimeType.StartsWith("multipart/", StringComparison.OrdinalIgnoreCase);
 
     private static EmailAttachmentDisposition GetDisposition(GmailMessagePart part)
     {
@@ -300,6 +426,33 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         return current;
     }
 
+    internal static GmailMessagePart? FindPartByProviderId(GmailMessagePart root, string providerPartId) =>
+        FindPartByPartId(root, providerPartId) ?? FindPartByPath(root, providerPartId);
+
+    private static GmailMessagePart? FindPartByPartId(GmailMessagePart part, string partId)
+    {
+        if (string.Equals(part.PartId, partId, StringComparison.Ordinal))
+        {
+            return part;
+        }
+
+        if (part.Parts is null)
+        {
+            return null;
+        }
+
+        foreach (var child in part.Parts)
+        {
+            var found = FindPartByPartId(child, partId);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
     private static void EnsureWithinLimit(string resource, long? actualBytes, long allowedBytes)
     {
         if (actualBytes is not null && actualBytes.Value > allowedBytes)
@@ -323,11 +476,36 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
     private static string? FirstNonBlank(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 
+    private enum MimeContainerKind
+    {
+        Root,
+        Mixed,
+        Alternative,
+        Related,
+        Digest,
+        EncapsulatedMessage,
+        Other
+    }
+
+    private sealed record MimeTraversalContext(MimeContainerKind ContainerKind, int Depth)
+    {
+        public MimeTraversalContext Enter(MimeContainerKind containerKind) =>
+            this with { ContainerKind = containerKind, Depth = Depth + 1 };
+
+        public MimeTraversalContext InsideAttachment(bool encapsulatedMessage) =>
+            this with
+            {
+                ContainerKind = encapsulatedMessage ? MimeContainerKind.EncapsulatedMessage : ContainerKind
+            };
+    }
+
     private sealed class ParseState
     {
-        public string? TextBody { get; set; }
+        public string? TextBody { get; private set; }
 
-        public string? HtmlBody { get; set; }
+        public string? HtmlBody { get; private set; }
+
+        public List<EmailBodySection> BodySections { get; } = [];
 
         public List<EmailAttachment> Attachments { get; } = [];
 
@@ -351,7 +529,23 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             }
         }
 
-        public void AddAttachment(EmailAttachment attachment, GmailContentLimitsOptions limits)
+        public void AddBodySection(IList<EmailBodySection> bodySections, EmailBodySection section)
+        {
+            bodySections.Add(section);
+            if (ReferenceEquals(bodySections, BodySections))
+            {
+                if (string.Equals(section.MediaType, "text/plain", StringComparison.OrdinalIgnoreCase))
+                {
+                    TextBody ??= section.Content;
+                }
+                else if (string.Equals(section.MediaType, "text/html", StringComparison.OrdinalIgnoreCase))
+                {
+                    HtmlBody ??= section.Content;
+                }
+            }
+        }
+
+        public void AddAttachment(IList<EmailAttachment> attachments, EmailAttachment attachment, GmailContentLimitsOptions limits)
         {
             AttachmentCount++;
             if (AttachmentCount > limits.MaxAttachmentCount)
@@ -359,7 +553,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
                 throw new EmailResourceLimitException("attachment count", AttachmentCount, limits.MaxAttachmentCount);
             }
 
-            Attachments.Add(attachment);
+            attachments.Add(attachment);
         }
 
         public void EnsureCanEmbed(string resource, long bytes, GmailContentLimitsOptions limits)

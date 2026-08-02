@@ -31,6 +31,14 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
         EmailAttachment attachment,
         CancellationToken cancellationToken = default)
     {
+        if (attachment.Kind is EmailAttachmentKind.Composite or EmailAttachmentKind.EncapsulatedMessage
+            && attachment.EmbeddedContent is null
+            && string.IsNullOrWhiteSpace(attachment.ExternalContentId)
+            && string.IsNullOrWhiteSpace(attachment.ProviderPartId))
+        {
+            throw new EmailCompositeAttachmentException(attachment);
+        }
+
         EnsureWithinOpenedLimit($"attachment {attachment.Id}", attachment.Size ?? attachment.EmbeddedContent?.Length);
 
         if (attachment.EmbeddedContent is { } embeddedContent)
@@ -98,7 +106,7 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
                 throw new EmailContentFormatException("Gmail returned a FULL message without a MIME payload.");
             }
 
-            var part = GmailMessagePartReader.FindPartByPath(message.Payload, providerPartId)
+            var part = GmailMessagePartReader.FindPartByProviderId(message.Payload, providerPartId)
                 ?? throw new EmailContentFormatException($"Gmail MIME part '{providerPartId}' was not found.");
             if (!string.IsNullOrWhiteSpace(part.Body?.AttachmentId))
             {

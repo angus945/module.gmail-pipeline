@@ -29,6 +29,7 @@ public sealed class GmailMessageMapper : IGmailMessageMapper
             ReceivedAt = receivedAt,
             TextBody = parsedMime.TextBody,
             HtmlBody = parsedMime.HtmlBody,
+            BodySections = parsedMime.BodySections,
             Attachments = parsedMime.Attachments,
             Headers = headers,
             LabelIds = message.LabelIds?.ToArray() ?? []
