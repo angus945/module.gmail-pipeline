@@ -13,26 +13,29 @@ public sealed class ProtectedFileDataStore : IDataStore
     private const int SchemaVersion = 2;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(StringComparer.OrdinalIgnoreCase);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly string _directoryPath;
     private readonly string _keyNamespace;
+    private readonly string _namespaceDirectory;
 
-    public ProtectedFileDataStore(string directoryPath, string keyNamespace)
+    public ProtectedFileDataStore(string rootDirectory, string keyNamespace)
     {
-        _directoryPath = directoryPath;
         _keyNamespace = keyNamespace;
-        Directory.CreateDirectory(_directoryPath);
+        var namespaceFingerprint = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(keyNamespace)))
+            .ToLowerInvariant();
+        _namespaceDirectory = Path.Combine(rootDirectory, namespaceFingerprint);
+        Directory.CreateDirectory(_namespaceDirectory);
     }
 
     public async Task ClearAsync()
     {
-        if (!Directory.Exists(_directoryPath))
+        if (!Directory.Exists(_namespaceDirectory))
         {
             return;
         }
 
         try
         {
-            foreach (var file in Directory.EnumerateFiles(_directoryPath, "*.bin"))
+            foreach (var file in Directory.EnumerateFiles(_namespaceDirectory, "*.bin"))
             {
                 var gate = GetGate(file);
                 await gate.WaitAsync().ConfigureAwait(false);
@@ -54,7 +57,7 @@ public sealed class ProtectedFileDataStore : IDataStore
 
     public async Task DeleteAsync<T>(string key)
     {
-        var path = GetPath(key);
+        var path = GetPath<T>(key);
         var gate = GetGate(path);
         await gate.WaitAsync().ConfigureAwait(false);
         try
@@ -76,7 +79,7 @@ public sealed class ProtectedFileDataStore : IDataStore
 
     public async Task<T> GetAsync<T>(string key)
     {
-        var path = GetPath(key);
+        var path = GetPath<T>(key);
         var gate = GetGate(path);
         await gate.WaitAsync().ConfigureAwait(false);
         try
@@ -117,7 +120,7 @@ public sealed class ProtectedFileDataStore : IDataStore
 
     public async Task StoreAsync<T>(string key, T value)
     {
-        var path = GetPath(key);
+        var path = GetPath<T>(key);
         var gate = GetGate(path);
         await gate.WaitAsync().ConfigureAwait(false);
         try
@@ -149,11 +152,11 @@ public sealed class ProtectedFileDataStore : IDataStore
         }
     }
 
-    private string GetPath(string key)
+    private string GetPath<T>(string key)
     {
-        var scopedKey = $"{_keyNamespace}\n{key}";
-        var safeName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scopedKey))).ToLowerInvariant();
-        return Path.Combine(_directoryPath, $"{safeName}.bin");
+        var typedKey = $"{typeof(T).AssemblyQualifiedName}\n{key}";
+        var safeName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(typedKey))).ToLowerInvariant();
+        return Path.Combine(_namespaceDirectory, $"{safeName}.bin");
     }
 
     private static SemaphoreSlim GetGate(string path) =>

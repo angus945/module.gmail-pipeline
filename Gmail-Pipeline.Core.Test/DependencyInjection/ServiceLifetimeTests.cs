@@ -47,7 +47,9 @@ public sealed class ServiceLifetimeTests
         result.ParseResult.Value.Should().Be("scoped");
     }
 
-    private sealed class ScopedDependency;
+    private sealed class ScopedDependency
+    {
+    }
 
     private sealed class ScopedParser : IEmailParser<string>
     {

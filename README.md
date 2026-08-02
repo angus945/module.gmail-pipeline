@@ -56,7 +56,7 @@ await labels.ModifyMessageLabelsAsync(
 
 `AddGmailPipelineGoogleModify` forces the `gmail.modify` scope and registers `IEmailLabelClient`. Label modification accepts Gmail label IDs; use `FindByNameAsync` or `GetOrCreateAsync` when the application starts from a label name.
 
-Read-only and modify tokens are stored under different client/user/scope namespaces, so changing scope requires a separate authorization instead of silently reusing an incompatible token.
+Read-only and modify tokens are stored under different client/user/scope namespace directories, so changing scope requires a separate authorization instead of silently reusing an incompatible token. The v2 token-store format does not migrate older flat-directory token files; after updating from an older module commit, authorize once again and leave old token cleanup as an explicit host-application decision.
 
 ## Credential And Token Stores
 
