@@ -1,18 +1,29 @@
 namespace GmailPipeline.Core.Parsing;
 
-public sealed record EmailParseResult<TResult>
+public abstract record EmailParseResult<TResult>
 {
-    public bool IsSuccess { get; init; }
+    private EmailParseResult()
+    {
+    }
 
-    public TResult? Value { get; init; }
+    public bool IsSuccess => this is Success;
 
-    public IReadOnlyList<EmailParseError> Errors { get; init; } = [];
+    public TResult? Value => this is Success success ? success.Result : default;
 
-    public IReadOnlyList<string> Warnings { get; init; } = [];
+    public IReadOnlyList<EmailParseError> Errors => this is Failure failure ? failure.ParseErrors : [];
 
-    public static EmailParseResult<TResult> Success(TResult value, IReadOnlyList<string>? warnings = null) =>
-        new() { IsSuccess = true, Value = value, Warnings = warnings ?? [] };
+    public IReadOnlyList<string> Warnings => this is Success success ? success.ParseWarnings : [];
+
+    public sealed record Success(
+        TResult Result,
+        IReadOnlyList<string> ParseWarnings) : EmailParseResult<TResult>;
+
+    public sealed record Failure(
+        IReadOnlyList<EmailParseError> ParseErrors) : EmailParseResult<TResult>;
+
+    public static EmailParseResult<TResult> Succeeded(TResult value, IReadOnlyList<string>? warnings = null) =>
+        new Success(value, warnings ?? []);
 
     public static EmailParseResult<TResult> Failed(params EmailParseError[] errors) =>
-        new() { IsSuccess = false, Errors = errors };
+        new Failure(errors);
 }

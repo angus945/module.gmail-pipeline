@@ -5,7 +5,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>GmailPipeline.Google</AssemblyName>
     <RootNamespace>GmailPipeline.Google</RootNamespace>
   </PropertyGroup>
@@ -14,6 +14,7 @@
     <PackageReference Include="Google.Apis.Auth" />
     <PackageReference Include="Google.Apis.Gmail.v1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="MimeKit" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
 

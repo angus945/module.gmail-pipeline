@@ -4,17 +4,21 @@ public sealed record EmailAttachment
 {
     public required string Id { get; init; }
 
-    public string? ProviderAttachmentId { get; init; }
+    public string? ExternalContentId { get; init; }
 
-    public string? InlineContentBase64Url { get; init; }
+    public ReadOnlyMemory<byte> EmbeddedContent { get; init; }
 
-    public required string FileName { get; init; }
+    public string? FileName { get; init; }
 
     public required string MediaType { get; init; }
+
+    public string? ContentId { get; init; }
+
+    public EmailAttachmentDisposition Disposition { get; init; } = EmailAttachmentDisposition.Unknown;
 
     public long? Size { get; init; }
 
     public required string PartPath { get; init; }
 
-    public bool IsInline => !string.IsNullOrWhiteSpace(InlineContentBase64Url);
+    public bool IsInline => Disposition == EmailAttachmentDisposition.Inline;
 }

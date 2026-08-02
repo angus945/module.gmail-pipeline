@@ -5,8 +5,18 @@ namespace GmailPipeline.Google.Clients;
 
 public sealed class GmailApiRetryPolicy
 {
+    private const int MaxAttempts = 5;
+    private static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(30);
+    private readonly IGmailRetryDelay _delay;
+
+    public GmailApiRetryPolicy(IGmailRetryDelay delay)
+    {
+        _delay = delay;
+    }
+
     public async Task<T> ExecuteAsync<T>(
         Func<CancellationToken, Task<T>> operation,
+        string operationName,
         CancellationToken cancellationToken = default)
     {
         var delay = TimeSpan.FromSeconds(1);
@@ -16,15 +26,38 @@ public sealed class GmailApiRetryPolicy
             {
                 return await operation(cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception exception) when (attempt < 5 && IsTransient(exception))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
-                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, TimeSpan.FromSeconds(30).TotalMilliseconds));
+                throw;
+            }
+            catch (Exception exception) when (attempt < MaxAttempts && IsTransient(exception))
+            {
+                var classification = GoogleErrorClassifier.Classify(exception);
+                var nextDelay = classification.RetryAfter ?? AddJitter(delay);
+                await _delay.DelayAsync(nextDelay, cancellationToken).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, MaxDelay.TotalMilliseconds));
             }
         }
     }
 
     public static bool IsTransient(Exception exception) =>
         exception is HttpRequestException
-        || exception is GoogleApiException { HttpStatusCode: HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError };
+        || GoogleErrorClassifier.Classify(exception).IsTransient;
+
+    private static TimeSpan AddJitter(TimeSpan delay)
+    {
+        var jitterMs = Random.Shared.Next(0, Math.Max(1, (int)Math.Min(250, delay.TotalMilliseconds / 4)));
+        return delay + TimeSpan.FromMilliseconds(jitterMs);
+    }
+}
+
+public interface IGmailRetryDelay
+{
+    Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken);
+}
+
+internal sealed class TaskDelayGmailRetryDelay : IGmailRetryDelay
+{
+    public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
+        Task.Delay(delay, cancellationToken);
 }

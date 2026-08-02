@@ -3,7 +3,12 @@ using Google.Apis.Gmail.v1;
 
 namespace GmailPipeline.Google.Authentication;
 
-public sealed class GmailServiceFactory
+public interface IGmailServiceFactory
+{
+    Task<GmailService> CreateAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed class GmailServiceFactory : IGmailServiceFactory
 {
     private readonly IGmailCredentialProvider _credentialProvider;
     private readonly GmailAuthenticationOptions _options;

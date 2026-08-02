@@ -26,8 +26,7 @@ public sealed record EmailMessage
 
     public IReadOnlyList<EmailAttachment> Attachments { get; init; } = [];
 
-    public IReadOnlyDictionary<string, string> Headers { get; init; } =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public EmailHeaderCollection Headers { get; init; } = new([]);
 
     public IReadOnlyList<string> LabelIds { get; init; } = [];
 }

@@ -1,61 +1,151 @@
-using System.Globalization;
+using GmailPipeline.Core.Exceptions;
 using GmailPipeline.Core.Models;
-using Google.Apis.Gmail.v1.Data;
+using MimeKit;
 
 namespace GmailPipeline.Google.Mime;
 
 public sealed class GmailMimeParser
 {
-    public GmailMimeParseResult Parse(Message message)
+    public GmailMimeParseResult Parse(MimeMessage message)
     {
-        if (message.Payload is null)
+        try
         {
-            return new GmailMimeParseResult(null, null, []);
+            return new GmailMimeParseResult(
+                message.TextBody,
+                message.HtmlBody,
+                CollectAttachments(message).ToArray());
         }
-
-        var attachments = new List<EmailAttachment>();
-        string? textBody = null;
-        string? htmlBody = null;
-
-        foreach (var (part, path) in GmailMessagePartWalker.Walk(message.Payload))
+        catch (Exception exception) when (exception is not EmailClientException)
         {
-            var fileName = part.Filename ?? string.Empty;
-            var attachmentId = part.Body?.AttachmentId;
-            var inlineData = part.Body?.Data;
-            var hasFileName = !string.IsNullOrWhiteSpace(fileName);
-            var hasProviderAttachment = hasFileName && !string.IsNullOrWhiteSpace(attachmentId);
-            var hasInlineAttachment = hasFileName && !string.IsNullOrWhiteSpace(inlineData);
-
-            if (hasProviderAttachment || hasInlineAttachment)
-            {
-                attachments.Add(new EmailAttachment
-                {
-                    Id = path,
-                    ProviderAttachmentId = attachmentId,
-                    InlineContentBase64Url = hasProviderAttachment ? null : inlineData,
-                    FileName = fileName,
-                    MediaType = part.MimeType ?? "application/octet-stream",
-                    Size = part.Body?.Size is null ? null : Convert.ToInt64(part.Body.Size, CultureInfo.InvariantCulture),
-                    PartPath = path
-                });
-                continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(inlineData))
-            {
-                continue;
-            }
-
-            if (string.Equals(part.MimeType, "text/plain", StringComparison.OrdinalIgnoreCase))
-            {
-                textBody ??= Base64UrlDecoder.DecodeUtf8(inlineData);
-            }
-            else if (string.Equals(part.MimeType, "text/html", StringComparison.OrdinalIgnoreCase))
-            {
-                htmlBody ??= Base64UrlDecoder.DecodeUtf8(inlineData);
-            }
+            throw new EmailContentFormatException("Failed to parse Gmail RAW MIME content.", exception);
         }
-
-        return new GmailMimeParseResult(textBody, htmlBody, attachments);
     }
+
+    private static IEnumerable<EmailAttachment> CollectAttachments(MimeMessage message)
+    {
+        foreach (var (entity, path) in Walk(message.Body, "0"))
+        {
+            if (!ShouldMaterialize(entity))
+            {
+                continue;
+            }
+
+            var content = ReadEntityContent(entity);
+            yield return new EmailAttachment
+            {
+                Id = path,
+                EmbeddedContent = content,
+                FileName = GetFileName(entity),
+                MediaType = entity.ContentType?.MimeType ?? "application/octet-stream",
+                ContentId = NormalizeContentId(entity.ContentId),
+                Disposition = GetDisposition(entity),
+                Size = content.LongLength,
+                PartPath = path
+            };
+        }
+    }
+
+    private static IEnumerable<(MimeEntity Entity, string Path)> Walk(MimeEntity? entity, string path)
+    {
+        if (entity is null)
+        {
+            yield break;
+        }
+
+        yield return (entity, path);
+
+        switch (entity)
+        {
+            case Multipart multipart:
+                for (var index = 0; index < multipart.Count; index++)
+                {
+                    foreach (var child in Walk(multipart[index], $"{path}.{index}"))
+                    {
+                        yield return child;
+                    }
+                }
+
+                break;
+            case MessagePart messagePart:
+                foreach (var child in Walk(messagePart.Message?.Body, $"{path}.message"))
+                {
+                    yield return child;
+                }
+
+                break;
+        }
+    }
+
+    private static bool ShouldMaterialize(MimeEntity entity)
+    {
+        if (entity is Multipart)
+        {
+            return false;
+        }
+
+        var disposition = entity.ContentDisposition?.Disposition;
+        return string.Equals(disposition, ContentDisposition.Attachment, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(disposition, ContentDisposition.Inline, StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(entity.ContentId)
+            || !string.IsNullOrWhiteSpace(GetFileName(entity))
+            || entity is MessagePart && entity.ContentDisposition is not null;
+    }
+
+    private static byte[] ReadEntityContent(MimeEntity entity)
+    {
+        using var stream = new MemoryStream();
+        switch (entity)
+        {
+            case MimePart mimePart:
+                if (mimePart.Content is null)
+                {
+                    mimePart.WriteTo(stream);
+                }
+                else
+                {
+                    mimePart.Content.DecodeTo(stream);
+                }
+
+                break;
+            case MessagePart messagePart:
+                messagePart.Message?.WriteTo(stream);
+                break;
+            default:
+                entity.WriteTo(stream);
+                break;
+        }
+
+        return stream.ToArray();
+    }
+
+    private static string? GetFileName(MimeEntity entity) =>
+        entity switch
+        {
+            MimePart mimePart => FirstNonBlank(mimePart.FileName, entity.ContentDisposition?.FileName, entity.ContentType?.Name),
+            MessagePart => FirstNonBlank(entity.ContentDisposition?.FileName, entity.ContentType?.Name),
+            _ => FirstNonBlank(entity.ContentDisposition?.FileName, entity.ContentType?.Name)
+        };
+
+    private static EmailAttachmentDisposition GetDisposition(MimeEntity entity)
+    {
+        var disposition = entity.ContentDisposition?.Disposition;
+        if (string.Equals(disposition, ContentDisposition.Inline, StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(entity.ContentId) && !string.Equals(disposition, ContentDisposition.Attachment, StringComparison.OrdinalIgnoreCase))
+        {
+            return EmailAttachmentDisposition.Inline;
+        }
+
+        return string.Equals(disposition, ContentDisposition.Attachment, StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(GetFileName(entity))
+            ? EmailAttachmentDisposition.Attachment
+            : EmailAttachmentDisposition.Unknown;
+    }
+
+    private static string? NormalizeContentId(string? contentId) =>
+        string.IsNullOrWhiteSpace(contentId)
+            ? null
+            : contentId.Trim('<', '>');
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 }

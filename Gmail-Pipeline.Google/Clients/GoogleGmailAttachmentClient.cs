@@ -11,17 +11,16 @@ namespace GmailPipeline.Google.Clients;
 
 public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
 {
-    private readonly GmailServiceFactory _serviceFactory;
+    private readonly IGmailServiceAccessor _serviceAccessor;
     private readonly GmailApiRetryPolicy _retryPolicy;
     private readonly string _userId;
-    private GmailService? _service;
 
     public GoogleGmailAttachmentClient(
-        GmailServiceFactory serviceFactory,
+        IGmailServiceAccessor serviceAccessor,
         GmailApiRetryPolicy retryPolicy,
         GmailAuthenticationOptions options)
     {
-        _serviceFactory = serviceFactory;
+        _serviceAccessor = serviceAccessor;
         _retryPolicy = retryPolicy;
         _userId = options.UserId;
     }
@@ -31,35 +30,29 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
         EmailAttachment attachment,
         CancellationToken cancellationToken = default)
     {
-        if (!string.IsNullOrWhiteSpace(attachment.InlineContentBase64Url))
+        if (attachment.EmbeddedContent.Length > 0)
         {
-            return new MemoryStream(Base64UrlDecoder.Decode(attachment.InlineContentBase64Url), writable: false);
+            return new MemoryStream(attachment.EmbeddedContent.ToArray(), writable: false);
         }
 
-        if (string.IsNullOrWhiteSpace(attachment.ProviderAttachmentId))
+        if (string.IsNullOrWhiteSpace(attachment.ExternalContentId))
         {
-            throw new EmailClientException("Email attachment has neither provider attachment id nor inline MIME data.");
+            throw new EmailClientException("Email attachment has neither embedded content nor external provider content id.");
         }
 
         try
         {
-            var service = await GetServiceAsync(cancellationToken).ConfigureAwait(false);
-            var gmailRequest = service.Users.Messages.Attachments.Get(_userId, messageId, attachment.ProviderAttachmentId);
+            var service = await _serviceAccessor.GetAsync(cancellationToken).ConfigureAwait(false);
+            var gmailRequest = service.Users.Messages.Attachments.Get(_userId, messageId, attachment.ExternalContentId);
             var response = await _retryPolicy
-                .ExecuteAsync(token => gmailRequest.ExecuteAsync(token), cancellationToken)
+                .ExecuteAsync(token => gmailRequest.ExecuteAsync(token), "open attachment", cancellationToken)
                 .ConfigureAwait(false);
 
             return new MemoryStream(Base64UrlDecoder.Decode(response.Data), writable: false);
         }
-        catch (Exception exception) when (exception is GoogleApiException or HttpRequestException)
+        catch (Exception exception) when (GoogleExceptionMapper.CanMap(exception))
         {
             throw GoogleExceptionMapper.Map(exception, "open attachment");
         }
-    }
-
-    private async Task<GmailService> GetServiceAsync(CancellationToken cancellationToken)
-    {
-        _service ??= await _serviceFactory.CreateAsync(cancellationToken).ConfigureAwait(false);
-        return _service;
     }
 }

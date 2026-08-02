@@ -1,6 +1,7 @@
 using GmailPipeline.Core.Models;
 using GmailPipeline.Google.Mime;
 using Google.Apis.Gmail.v1.Data;
+using MimeKit;
 
 namespace GmailPipeline.Google.Mapping;
 
@@ -13,28 +14,27 @@ public sealed class GmailMessageMapper : IGmailMessageMapper
         _mimeParser = mimeParser;
     }
 
-    public EmailMessage Map(Message message)
+    public EmailMessage Map(Message message, MimeMessage mimeMessage)
     {
-        var headers = new EmailHeaderCollection((message.Payload?.Headers ?? [])
-            .Where(header => !string.IsNullOrWhiteSpace(header.Name))
-            .Select(header => new KeyValuePair<string, string>(header.Name, header.Value ?? string.Empty)));
+        var headers = new EmailHeaderCollection(mimeMessage.Headers
+            .Where(header => !string.IsNullOrWhiteSpace(header.Field))
+            .Select(header => new KeyValuePair<string, string>(header.Field, header.Value ?? string.Empty)));
 
-        var parsedMime = _mimeParser.Parse(message);
+        var parsedMime = _mimeParser.Parse(mimeMessage);
         var receivedAt = message.InternalDate is null
             ? (DateTimeOffset?)null
             : DateTimeOffset.FromUnixTimeMilliseconds(Convert.ToInt64(message.InternalDate, System.Globalization.CultureInfo.InvariantCulture));
-        headers.TryGetValue("Date", out var dateHeader);
 
         return new EmailMessage
         {
             Id = message.Id,
             ThreadId = message.ThreadId ?? string.Empty,
-            Subject = GetHeader(headers, "Subject"),
-            From = GmailAddressParser.ParseSingle(GetHeader(headers, "From")),
-            To = GmailAddressParser.ParseMany(GetHeader(headers, "To")),
-            Cc = GmailAddressParser.ParseMany(GetHeader(headers, "Cc")),
-            Bcc = GmailAddressParser.ParseMany(GetHeader(headers, "Bcc")),
-            SentAt = GmailDateParser.ParseHeaderDate(dateHeader),
+            Subject = mimeMessage.Subject,
+            From = ToEmailAddress(mimeMessage.From.Mailboxes.FirstOrDefault()),
+            To = ToEmailAddresses(mimeMessage.To),
+            Cc = ToEmailAddresses(mimeMessage.Cc),
+            Bcc = ToEmailAddresses(mimeMessage.Bcc),
+            SentAt = mimeMessage.Date == default ? null : mimeMessage.Date,
             ReceivedAt = receivedAt,
             TextBody = parsedMime.TextBody,
             HtmlBody = parsedMime.HtmlBody,
@@ -44,6 +44,13 @@ public sealed class GmailMessageMapper : IGmailMessageMapper
         };
     }
 
-    private static string? GetHeader(IReadOnlyDictionary<string, string> headers, string name) =>
-        headers.TryGetValue(name, out var value) ? value : null;
+    private static IReadOnlyList<EmailAddress> ToEmailAddresses(InternetAddressList addresses) =>
+        addresses.Mailboxes.Select(mailbox => ToEmailAddress(mailbox)!).ToArray();
+
+    private static EmailAddress? ToEmailAddress(MailboxAddress? address) =>
+        address is null
+            ? null
+            : new EmailAddress(
+                address.Address,
+                string.IsNullOrWhiteSpace(address.Name) ? null : address.Name);
 }

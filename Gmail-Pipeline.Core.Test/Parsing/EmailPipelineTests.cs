@@ -86,7 +86,7 @@ public sealed class EmailPipelineTests
             CancellationToken cancellationToken = default)
         {
             ParseCount++;
-            return Task.FromResult(EmailParseResult<string>.Success(_value));
+            return Task.FromResult(EmailParseResult<string>.Succeeded(_value));
         }
     }
 }
