@@ -58,6 +58,29 @@ await labels.ModifyMessageLabelsAsync(
 
 Read-only and modify tokens are stored under different client/user/scope namespace directories, so changing scope requires a separate authorization instead of silently reusing an incompatible token. The v2 token-store format does not migrate older flat-directory token files; after updating from an older module commit, authorize once again and leave old token cleanup as an explicit host-application decision.
 
+## Content Limits
+
+Gmail messages are read with `format=FULL`. The reader parses text bodies and attachment metadata, but large attachment bytes are lazy and are not stored in `EmailMessage.Attachments` during `IEmailReader.GetAsync`.
+
+Default resource limits:
+
+- `MaxTextBodyBytes`: 4 MiB
+- `MaxEmbeddedAttachmentBytes`: 256 KiB
+- `MaxOpenedAttachmentBytes`: 32 MiB
+
+Override limits before registering Gmail services:
+
+```csharp
+services.AddSingleton(new GmailContentLimitsOptions
+{
+    MaxTextBodyBytes = 2 * 1024 * 1024,
+    MaxEmbeddedAttachmentBytes = 128 * 1024,
+    MaxOpenedAttachmentBytes = 16 * 1024 * 1024
+});
+```
+
+When content exceeds the configured limit, the module throws `EmailResourceLimitException` instead of attempting unbounded allocation.
+
 ## Credential And Token Stores
 
 The default `InstalledAppCredentialProvider` loads an installed-app OAuth client JSON file and starts Google interactive authorization when no token exists. This is only suitable for local desktop/personal use.

@@ -11,17 +11,17 @@ namespace GmailPipeline.Google.Clients;
 
 public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
 {
-    private readonly IGmailServiceAccessor _serviceAccessor;
-    private readonly GmailApiRetryPolicy _retryPolicy;
+    private readonly IGmailMessageClient _messageClient;
+    private readonly GmailContentLimitsOptions _limits;
     private readonly string _userId;
 
     public GoogleGmailAttachmentClient(
-        IGmailServiceAccessor serviceAccessor,
-        GmailApiRetryPolicy retryPolicy,
+        IGmailMessageClient messageClient,
+        GmailContentLimitsOptions limits,
         GmailAuthenticationOptions options)
     {
-        _serviceAccessor = serviceAccessor;
-        _retryPolicy = retryPolicy;
+        _messageClient = messageClient;
+        _limits = limits;
         _userId = options.UserId;
     }
 
@@ -30,29 +30,94 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
         EmailAttachment attachment,
         CancellationToken cancellationToken = default)
     {
-        if (attachment.EmbeddedContent.Length > 0)
+        if (attachment.EmbeddedContent is { } embeddedContent)
         {
-            return new MemoryStream(attachment.EmbeddedContent.ToArray(), writable: false);
+            return new ReadOnlyMemoryStream(embeddedContent);
         }
 
-        if (string.IsNullOrWhiteSpace(attachment.ExternalContentId))
+        if (!string.IsNullOrWhiteSpace(attachment.ExternalContentId))
         {
-            throw new EmailClientException("Email attachment has neither embedded content nor external provider content id.");
+            return await OpenExternalAttachmentAsync(messageId, attachment.ExternalContentId, cancellationToken).ConfigureAwait(false);
         }
 
+        if (!string.IsNullOrWhiteSpace(attachment.ProviderPartId))
+        {
+            return await OpenProviderPartAsync(messageId, attachment.ProviderPartId, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new EmailClientException("Email attachment has no embedded content, external provider content id, or provider part id.");
+    }
+
+    public async Task CopyAttachmentToAsync(
+        string messageId,
+        EmailAttachment attachment,
+        Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        await using var source = await OpenAttachmentAsync(messageId, attachment, cancellationToken).ConfigureAwait(false);
+        await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<Stream> OpenExternalAttachmentAsync(
+        string messageId,
+        string externalContentId,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            var service = await _serviceAccessor.GetAsync(cancellationToken).ConfigureAwait(false);
-            var gmailRequest = service.Users.Messages.Attachments.Get(_userId, messageId, attachment.ExternalContentId);
-            var response = await _retryPolicy
-                .ExecuteAsync(token => gmailRequest.ExecuteAsync(token), "open attachment", cancellationToken)
+            var response = await _messageClient
+                .GetAttachmentAsync(_userId, messageId, externalContentId, cancellationToken)
                 .ConfigureAwait(false);
+            EnsureWithinOpenedLimit("external attachment", response.Size);
 
-            return new MemoryStream(Base64UrlDecoder.Decode(response.Data), writable: false);
+            return new MemoryStream(
+                Base64UrlDecoder.Decode(response.Data ?? string.Empty, "external attachment", _limits.MaxOpenedAttachmentBytes),
+                writable: false);
         }
         catch (Exception exception) when (GoogleExceptionMapper.CanMap(exception))
         {
             throw GoogleExceptionMapper.Map(exception, "open attachment");
+        }
+    }
+
+    private async Task<Stream> OpenProviderPartAsync(
+        string messageId,
+        string providerPartId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var message = await _messageClient
+                .GetAsync(_userId, messageId, UsersResource.MessagesResource.GetRequest.FormatEnum.Full, cancellationToken)
+                .ConfigureAwait(false);
+            if (message.Payload is null)
+            {
+                throw new EmailContentFormatException("Gmail returned a FULL message without a MIME payload.");
+            }
+
+            var part = GmailMessagePartReader.FindPartByPath(message.Payload, providerPartId)
+                ?? throw new EmailContentFormatException($"Gmail MIME part '{providerPartId}' was not found.");
+            if (!string.IsNullOrWhiteSpace(part.Body?.AttachmentId))
+            {
+                return await OpenExternalAttachmentAsync(messageId, part.Body.AttachmentId, cancellationToken).ConfigureAwait(false);
+            }
+
+            EnsureWithinOpenedLimit($"attachment part {providerPartId}", part.Body?.Size);
+            return new MemoryStream(
+                Base64UrlDecoder.Decode(part.Body?.Data ?? string.Empty, $"attachment part {providerPartId}", _limits.MaxOpenedAttachmentBytes),
+                writable: false);
+        }
+        catch (Exception exception) when (GoogleExceptionMapper.CanMap(exception))
+        {
+            throw GoogleExceptionMapper.Map(exception, "open attachment part");
+        }
+    }
+
+    private void EnsureWithinOpenedLimit(string resource, long? actualBytes)
+    {
+        if (actualBytes is not null && actualBytes.Value > _limits.MaxOpenedAttachmentBytes)
+        {
+            throw new EmailResourceLimitException(resource, actualBytes.Value, _limits.MaxOpenedAttachmentBytes);
         }
     }
 }

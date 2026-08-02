@@ -8,26 +8,25 @@ using GmailPipeline.Google.Mapping;
 using GmailPipeline.Google.Mime;
 using Google;
 using Google.Apis.Gmail.v1;
-using MimeKit;
 
 namespace GmailPipeline.Google.Clients;
 
 public sealed class GoogleGmailReader : IEmailReader
 {
-    private readonly IGmailServiceAccessor _serviceAccessor;
+    private readonly IGmailMessageClient _messageClient;
     private readonly IGmailMessageMapper _mapper;
-    private readonly GmailApiRetryPolicy _retryPolicy;
+    private readonly IGmailMessagePartReader _partReader;
     private readonly string _userId;
 
     public GoogleGmailReader(
-        IGmailServiceAccessor serviceAccessor,
+        IGmailMessageClient messageClient,
         IGmailMessageMapper mapper,
-        GmailApiRetryPolicy retryPolicy,
+        IGmailMessagePartReader partReader,
         GmailAuthenticationOptions options)
     {
-        _serviceAccessor = serviceAccessor;
+        _messageClient = messageClient;
         _mapper = mapper;
-        _retryPolicy = retryPolicy;
+        _partReader = partReader;
         _userId = options.UserId;
     }
 
@@ -37,15 +36,8 @@ public sealed class GoogleGmailReader : IEmailReader
     {
         try
         {
-            var service = await _serviceAccessor.GetAsync(cancellationToken).ConfigureAwait(false);
-            var gmailRequest = service.Users.Messages.List(_userId);
-            gmailRequest.Q = string.IsNullOrWhiteSpace(request.Query) ? null : request.Query;
-            gmailRequest.MaxResults = Math.Clamp(request.PageSize, 1, 500);
-            gmailRequest.PageToken = request.PageToken;
-            gmailRequest.IncludeSpamTrash = request.IncludeSpamTrash;
-
-            var response = await _retryPolicy
-                .ExecuteAsync(token => gmailRequest.ExecuteAsync(token), "search messages", cancellationToken)
+            var response = await _messageClient
+                .SearchAsync(_userId, request, cancellationToken)
                 .ConfigureAwait(false);
             var references = (response.Messages ?? [])
                 .Select(message => new EmailReference(message.Id, message.ThreadId ?? string.Empty))
@@ -65,20 +57,16 @@ public sealed class GoogleGmailReader : IEmailReader
     {
         try
         {
-            var service = await _serviceAccessor.GetAsync(cancellationToken).ConfigureAwait(false);
-            var gmailRequest = service.Users.Messages.Get(_userId, messageId);
-            gmailRequest.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Raw;
-            var message = await _retryPolicy
-                .ExecuteAsync(token => gmailRequest.ExecuteAsync(token), "get message", cancellationToken)
+            var message = await _messageClient
+                .GetAsync(_userId, messageId, UsersResource.MessagesResource.GetRequest.FormatEnum.Full, cancellationToken)
                 .ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(message.Raw))
+            if (message.Payload is null)
             {
-                throw new EmailContentFormatException("Gmail returned an empty RAW message payload.");
+                throw new EmailContentFormatException("Gmail returned a FULL message without a MIME payload.");
             }
 
-            await using var stream = new MemoryStream(Base64UrlDecoder.Decode(message.Raw));
-            var mimeMessage = await MimeMessage.LoadAsync(stream, cancellationToken).ConfigureAwait(false);
-            return _mapper.Map(message, mimeMessage);
+            var parsedMime = await _partReader.ParseAsync(message.Id, message.Payload, cancellationToken).ConfigureAwait(false);
+            return _mapper.Map(message, parsedMime);
         }
         catch (GoogleApiException exception) when (exception.HttpStatusCode == System.Net.HttpStatusCode.NotFound)
         {

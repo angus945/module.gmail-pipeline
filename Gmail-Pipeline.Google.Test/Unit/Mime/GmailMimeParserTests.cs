@@ -45,7 +45,7 @@ public sealed class GmailMimeParserTests
         result.Attachments.Should().ContainSingle();
         result.Attachments[0].Id.Should().Be("0.1");
         result.Attachments[0].ExternalContentId.Should().BeNull();
-        result.Attachments[0].EmbeddedContent.ToArray().Should().Equal(Convert.FromBase64String("UEsDBA=="));
+        result.Attachments[0].EmbeddedContent!.Value.ToArray().Should().Equal(Convert.FromBase64String("UEsDBA=="));
         result.Attachments[0].FileName.Should().Be("statement.zip");
         result.Attachments[0].Disposition.Should().Be(EmailAttachmentDisposition.Attachment);
     }
@@ -76,7 +76,7 @@ public sealed class GmailMimeParserTests
         attachment.IsInline.Should().BeTrue();
         attachment.ContentId.Should().Be("logo@example");
         attachment.FileName.Should().Be("logo.png");
-        attachment.EmbeddedContent.ToArray().Should().Equal(Convert.FromBase64String("iVBORw0KGgo="));
+        attachment.EmbeddedContent!.Value.ToArray().Should().Equal(Convert.FromBase64String("iVBORw0KGgo="));
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public sealed class GmailMimeParserTests
         var attachment = result.Attachments.Should().ContainSingle().Subject;
         attachment.MediaType.Should().Be("message/rfc822");
         attachment.FileName.Should().Be("forwarded.eml");
-        Encoding.UTF8.GetString(attachment.EmbeddedContent.ToArray()).Should().Contain("Subject: Nested");
+        Encoding.UTF8.GetString(attachment.EmbeddedContent!.Value.ToArray()).Should().Contain("Subject: Nested");
     }
 
     [Fact]

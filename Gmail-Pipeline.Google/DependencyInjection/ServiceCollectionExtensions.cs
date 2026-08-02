@@ -71,6 +71,9 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IGmailServiceAccessor, GmailServiceAccessor>();
         services.TryAddSingleton<IGmailRetryDelay, TaskDelayGmailRetryDelay>();
         services.TryAddSingleton<GmailApiRetryPolicy>();
+        services.TryAddSingleton<GmailContentLimitsOptions>();
+        services.TryAddSingleton<IGmailMessageClient, GoogleGmailMessageClient>();
+        services.TryAddSingleton<IGmailMessagePartReader, GmailMessagePartReader>();
         services.TryAddSingleton<GmailMimeParser>();
         services.TryAddSingleton<IGmailMessageMapper, GmailMessageMapper>();
     }
