@@ -25,8 +25,25 @@ public sealed class GoogleGmailReaderResourceLimitTests
         var message = await reader.GetAsync("message-1");
 
         message!.TextBody.Should().Be("hello");
-        messageClient.RequestedFormats.Should().Equal(UsersResource.MessagesResource.GetRequest.FormatEnum.Full);
+        messageClient.RequestedFormats.Should().Equal(
+            UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata,
+            UsersResource.MessagesResource.GetRequest.FormatEnum.Full);
         messageClient.RequestedFormats.Should().NotContain(UsersResource.MessagesResource.GetRequest.FormatEnum.Raw);
+    }
+
+    [Fact]
+    public async Task GetAsyncRejectsMessageSizeEstimateAboveConfiguredLimitBeforeRequestingFullMessage()
+    {
+        var messageClient = new FakeMessageClient
+        {
+            Message = CreateMessage(Text("text/plain", Encode("hello"), size: 5), sizeEstimate: 5)
+        };
+        var reader = CreateReader(messageClient, new GmailContentLimitsOptions { MaxMessageSizeEstimateBytes = 4 });
+
+        var act = async () => await reader.GetAsync("message-1");
+
+        await act.Should().ThrowAsync<EmailResourceLimitException>();
+        messageClient.RequestedFormats.Should().Equal(UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata);
     }
 
     [Fact]
@@ -64,18 +81,21 @@ public sealed class GoogleGmailReaderResourceLimitTests
         GmailContentLimitsOptions? limits = null)
     {
         var options = new GmailAuthenticationOptions();
+        var effectiveLimits = limits ?? new GmailContentLimitsOptions();
         return new GoogleGmailReader(
             messageClient,
             new GmailMessageMapper(),
-            new GmailMessagePartReader(messageClient, limits ?? new GmailContentLimitsOptions(), options),
+            new GmailMessagePartReader(messageClient, effectiveLimits, new DefaultEmailCharsetResolver(), options),
+            effectiveLimits,
             options);
     }
 
-    private static Message CreateMessage(MessagePart part) =>
+    private static Message CreateMessage(MessagePart part, int? sizeEstimate = null) =>
         new()
         {
             Id = "message-1",
             ThreadId = "thread-1",
+            SizeEstimate = sizeEstimate,
             Payload = new MessagePart
             {
                 MimeType = "multipart/mixed",

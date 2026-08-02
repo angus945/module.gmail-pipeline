@@ -81,7 +81,41 @@ public sealed class GoogleGmailAttachmentClientTests
     }
 
     [Fact]
-    public async Task OpenAttachmentAsyncRejectsExternalAttachmentAboveConfiguredLimit()
+    public async Task OpenAttachmentAsyncRejectsKnownExternalAttachmentAboveConfiguredLimitBeforeFetchingContent()
+    {
+        var messageClient = new FakeMessageClient();
+        var client = CreateClient(messageClient, new GmailContentLimitsOptions { MaxOpenedAttachmentBytes = 4 });
+        var attachment = CreateAttachment() with
+        {
+            ExternalContentId = "external-1",
+            Size = 5
+        };
+
+        var act = async () => await client.OpenAttachmentAsync("message-1", attachment);
+
+        await act.Should().ThrowAsync<EmailResourceLimitException>();
+        messageClient.GetAttachmentCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsyncRejectsKnownProviderPartAboveConfiguredLimitBeforeFetchingFullMessage()
+    {
+        var messageClient = new FakeMessageClient();
+        var client = CreateClient(messageClient, new GmailContentLimitsOptions { MaxOpenedAttachmentBytes = 4 });
+        var attachment = CreateAttachment() with
+        {
+            ProviderPartId = "0.0",
+            Size = 5
+        };
+
+        var act = async () => await client.OpenAttachmentAsync("message-1", attachment);
+
+        await act.Should().ThrowAsync<EmailResourceLimitException>();
+        messageClient.RequestedFormats.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsyncRejectsExternalAttachmentResponseAboveConfiguredLimit()
     {
         var messageClient = new FakeMessageClient();
         messageClient.Attachments["external-1"] = new MessagePartBody { Data = Encode("hello"), Size = 5 };
@@ -94,6 +128,7 @@ public sealed class GoogleGmailAttachmentClientTests
         var act = async () => await client.OpenAttachmentAsync("message-1", attachment);
 
         await act.Should().ThrowAsync<EmailResourceLimitException>();
+        messageClient.GetAttachmentCallCount.Should().Be(1);
     }
 
     private static GoogleGmailAttachmentClient CreateClient(
@@ -123,6 +158,8 @@ public sealed class GoogleGmailAttachmentClientTests
 
         public List<UsersResource.MessagesResource.GetRequest.FormatEnum> RequestedFormats { get; } = [];
 
+        public int GetAttachmentCallCount { get; private set; }
+
         public Task<ListMessagesResponse> SearchAsync(
             string userId,
             EmailSearchRequest request,
@@ -144,6 +181,12 @@ public sealed class GoogleGmailAttachmentClientTests
             string messageId,
             string attachmentId,
             CancellationToken cancellationToken = default) =>
-            Task.FromResult(Attachments[attachmentId]);
+            Task.FromResult(GetAttachment(attachmentId));
+
+        private MessagePartBody GetAttachment(string attachmentId)
+        {
+            GetAttachmentCallCount++;
+            return Attachments[attachmentId];
+        }
     }
 }

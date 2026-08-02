@@ -4,6 +4,8 @@ using GmailPipeline.Core.Exceptions;
 using GmailPipeline.Core.Models;
 using GmailPipeline.Google.Clients;
 using Google.Apis.Gmail.v1.Data;
+using MimeKit;
+using GmailMessagePart = Google.Apis.Gmail.v1.Data.MessagePart;
 
 namespace GmailPipeline.Google.Mime;
 
@@ -11,36 +13,48 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 {
     private readonly IGmailMessageClient _messageClient;
     private readonly GmailContentLimitsOptions _limits;
+    private readonly IEmailCharsetResolver _charsetResolver;
     private readonly string _userId;
 
     public GmailMessagePartReader(
         IGmailMessageClient messageClient,
         GmailContentLimitsOptions limits,
+        IEmailCharsetResolver charsetResolver,
         Authentication.GmailAuthenticationOptions options)
     {
         _messageClient = messageClient;
         _limits = limits;
+        _limits.Validate();
+        _charsetResolver = charsetResolver;
         _userId = options.UserId;
     }
 
     public async Task<GmailMimeParseResult> ParseAsync(
         string messageId,
-        MessagePart root,
+        GmailMessagePart root,
         CancellationToken cancellationToken = default)
     {
         var state = new ParseState();
-        await ReadPartAsync(messageId, root, "0", state, cancellationToken).ConfigureAwait(false);
+        await ReadPartAsync(messageId, root, "0", depth: 1, state, cancellationToken).ConfigureAwait(false);
         return new GmailMimeParseResult(state.TextBody, state.HtmlBody, state.Attachments);
     }
 
     private async Task ReadPartAsync(
         string messageId,
-        MessagePart part,
+        GmailMessagePart part,
         string path,
+        int depth,
         ParseState state,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        state.CountPart(path, depth, _limits);
+
+        if (IsExplicitAttachment(part))
+        {
+            state.AddAttachment(CreateAttachment(part, path, state), _limits);
+            return;
+        }
 
         if (IsTextPart(part, "text/plain"))
         {
@@ -54,9 +68,9 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             return;
         }
 
-        if (ShouldMaterializeAttachment(part))
+        if (IsInlineResource(part))
         {
-            state.Attachments.Add(CreateAttachment(part, path));
+            state.AddAttachment(CreateAttachment(part, path, state), _limits);
             return;
         }
 
@@ -67,13 +81,13 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 
         for (var index = 0; index < part.Parts.Count; index++)
         {
-            await ReadPartAsync(messageId, part.Parts[index], $"{path}.{index}", state, cancellationToken).ConfigureAwait(false);
+            await ReadPartAsync(messageId, part.Parts[index], $"{path}.{index}", depth + 1, state, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async Task<string> ReadTextAsync(
         string messageId,
-        MessagePart part,
+        GmailMessagePart part,
         string path,
         CancellationToken cancellationToken)
     {
@@ -87,6 +101,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         var resource = $"{part.MimeType ?? "text"} body at {path}";
         if (data is null && !string.IsNullOrWhiteSpace(body.AttachmentId))
         {
+            EnsureWithinLimit(resource, ToNullableLong(body.Size), _limits.MaxTextBodyBytes);
             var response = await _messageClient
                 .GetAttachmentAsync(_userId, messageId, body.AttachmentId, cancellationToken)
                 .ConfigureAwait(false);
@@ -99,10 +114,18 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         }
 
         var bytes = Base64UrlDecoder.Decode(data ?? string.Empty, resource, _limits.MaxTextBodyBytes);
-        return GetEncoding(part).GetString(bytes);
+        var encoding = _charsetResolver.Resolve(GetContentTypeParameter(part, "charset"), resource);
+        try
+        {
+            return encoding.GetString(bytes);
+        }
+        catch (DecoderFallbackException exception)
+        {
+            throw new EmailContentFormatException($"Failed to decode {resource} using charset '{encoding.WebName}'.", exception);
+        }
     }
 
-    private EmailAttachment CreateAttachment(MessagePart part, string path)
+    private EmailAttachment CreateAttachment(GmailMessagePart part, string path, ParseState state)
     {
         var body = part.Body;
         var size = ToNullableLong(body?.Size);
@@ -112,7 +135,9 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 
         if (data is not null && CanEmbed(data, size))
         {
+            state.EnsureCanEmbed($"attachment {path}", GetMaximumDecodedByteCount(data, size), _limits);
             embeddedContent = Base64UrlDecoder.Decode(data, $"attachment {path}", _limits.MaxEmbeddedAttachmentBytes);
+            state.RegisterEmbeddedBytes($"attachment {path}", embeddedContent.Value.Length, _limits);
         }
         else if (data is not null)
         {
@@ -146,14 +171,13 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         }
 
         var padding = (4 - data.Length % 4) % 4;
-        var maxDecodedBytes = (data.Length + padding) / 4 * 3;
-        return maxDecodedBytes <= _limits.MaxEmbeddedAttachmentBytes + 2;
+        return GetMaximumDecodedByteCount(data, null) <= _limits.MaxEmbeddedAttachmentBytes + 2;
     }
 
-    private static bool IsTextPart(MessagePart part, string mimeType) =>
+    private static bool IsTextPart(GmailMessagePart part, string mimeType) =>
         string.Equals(part.MimeType, mimeType, StringComparison.OrdinalIgnoreCase);
 
-    private static bool ShouldMaterializeAttachment(MessagePart part)
+    private static bool IsExplicitAttachment(GmailMessagePart part)
     {
         if (part.Parts is not null && part.Parts.Count > 0 && !IsAttachedMessage(part))
         {
@@ -162,17 +186,29 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 
         var disposition = GetDispositionToken(part);
         return string.Equals(disposition, "attachment", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(disposition, "inline", StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrWhiteSpace(part.Filename)
-            || !string.IsNullOrWhiteSpace(GetContentTypeParameter(part, "name"))
+            || !string.IsNullOrWhiteSpace(GetContentTypeParameter(part, "name"));
+    }
+
+    private static bool IsInlineResource(GmailMessagePart part)
+    {
+        if (part.Parts is not null && part.Parts.Count > 0 && !IsAttachedMessage(part))
+        {
+            return false;
+        }
+
+        var disposition = GetDispositionToken(part);
+        return string.Equals(disposition, "inline", StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrWhiteSpace(GetHeader(part, "Content-ID"));
     }
 
-    private static bool IsAttachedMessage(MessagePart part) =>
+    private static bool IsAttachedMessage(GmailMessagePart part) =>
         string.Equals(part.MimeType, "message/rfc822", StringComparison.OrdinalIgnoreCase)
-        && !string.IsNullOrWhiteSpace(GetDispositionToken(part));
+        && (!string.IsNullOrWhiteSpace(GetDispositionToken(part))
+            || !string.IsNullOrWhiteSpace(part.Filename)
+            || !string.IsNullOrWhiteSpace(GetContentTypeParameter(part, "name")));
 
-    private static EmailAttachmentDisposition GetDisposition(MessagePart part)
+    private static EmailAttachmentDisposition GetDisposition(GmailMessagePart part)
     {
         var disposition = GetDispositionToken(part);
         if (string.Equals(disposition, "inline", StringComparison.OrdinalIgnoreCase)
@@ -188,25 +224,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             : EmailAttachmentDisposition.Unknown;
     }
 
-    private static Encoding GetEncoding(MessagePart part)
-    {
-        var charset = GetContentTypeParameter(part, "charset");
-        if (string.IsNullOrWhiteSpace(charset))
-        {
-            return Encoding.UTF8;
-        }
-
-        try
-        {
-            return Encoding.GetEncoding(charset);
-        }
-        catch (ArgumentException)
-        {
-            return Encoding.UTF8;
-        }
-    }
-
-    private static string? GetDispositionToken(MessagePart part)
+    private static string? GetDispositionToken(GmailMessagePart part)
     {
         var disposition = GetHeader(part, "Content-Disposition");
         if (string.IsNullOrWhiteSpace(disposition))
@@ -218,7 +236,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         return (separator < 0 ? disposition : disposition[..separator]).Trim();
     }
 
-    private static string? GetContentTypeParameter(MessagePart part, string parameterName)
+    private static string? GetContentTypeParameter(GmailMessagePart part, string parameterName)
     {
         var contentType = GetHeader(part, "Content-Type");
         if (string.IsNullOrWhiteSpace(contentType))
@@ -226,19 +244,38 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
             return null;
         }
 
-        foreach (var segment in contentType.Split(';').Skip(1))
+        try
         {
-            var parts = segment.Split('=', 2);
-            if (parts.Length == 2 && string.Equals(parts[0].Trim(), parameterName, StringComparison.OrdinalIgnoreCase))
+            var parsed = ContentType.Parse(contentType);
+            if (string.Equals(parameterName, "charset", StringComparison.OrdinalIgnoreCase))
             {
-                return parts[1].Trim().Trim('"');
+                return parsed.Charset;
             }
-        }
 
-        return null;
+            return parsed.Parameters[parameterName];
+        }
+        catch (ParseException)
+        {
+            return null;
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 
-    internal static MessagePart? FindPartByPath(MessagePart root, string path)
+    private static long GetMaximumDecodedByteCount(string data, long? size)
+    {
+        if (size is not null)
+        {
+            return size.Value;
+        }
+
+        var padding = (4 - data.Length % 4) % 4;
+        return (data.Length + padding) / 4 * 3;
+    }
+
+    internal static GmailMessagePart? FindPartByPath(GmailMessagePart root, string path)
     {
         var current = root;
         var segments = path.Split('.');
@@ -273,7 +310,7 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
 
     private static long? ToNullableLong(long? value) => value;
 
-    private static string? GetHeader(MessagePart part, string name) =>
+    private static string? GetHeader(GmailMessagePart part, string name) =>
         part.Headers?
             .FirstOrDefault(header => string.Equals(header.Name, name, StringComparison.OrdinalIgnoreCase))
             ?.Value;
@@ -293,5 +330,49 @@ public sealed class GmailMessagePartReader : IGmailMessagePartReader
         public string? HtmlBody { get; set; }
 
         public List<EmailAttachment> Attachments { get; } = [];
+
+        public long EmbeddedAttachmentBytes { get; private set; }
+
+        public int AttachmentCount { get; private set; }
+
+        public int PartCount { get; private set; }
+
+        public void CountPart(string path, int depth, GmailContentLimitsOptions limits)
+        {
+            if (depth > limits.MaxMimeDepth)
+            {
+                throw new EmailResourceLimitException($"MIME depth at {path}", depth, limits.MaxMimeDepth);
+            }
+
+            PartCount++;
+            if (PartCount > limits.MaxMimePartCount)
+            {
+                throw new EmailResourceLimitException("MIME part count", PartCount, limits.MaxMimePartCount);
+            }
+        }
+
+        public void AddAttachment(EmailAttachment attachment, GmailContentLimitsOptions limits)
+        {
+            AttachmentCount++;
+            if (AttachmentCount > limits.MaxAttachmentCount)
+            {
+                throw new EmailResourceLimitException("attachment count", AttachmentCount, limits.MaxAttachmentCount);
+            }
+
+            Attachments.Add(attachment);
+        }
+
+        public void EnsureCanEmbed(string resource, long bytes, GmailContentLimitsOptions limits)
+        {
+            EnsureWithinLimit(resource, bytes, limits.MaxEmbeddedAttachmentBytes);
+            EnsureWithinLimit("total embedded attachment bytes", EmbeddedAttachmentBytes + bytes, limits.MaxTotalEmbeddedAttachmentBytes);
+        }
+
+        public void RegisterEmbeddedBytes(string resource, long bytes, GmailContentLimitsOptions limits)
+        {
+            EnsureWithinLimit(resource, bytes, limits.MaxEmbeddedAttachmentBytes);
+            EmbeddedAttachmentBytes += bytes;
+            EnsureWithinLimit("total embedded attachment bytes", EmbeddedAttachmentBytes, limits.MaxTotalEmbeddedAttachmentBytes);
+        }
     }
 }

@@ -22,6 +22,7 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
     {
         _messageClient = messageClient;
         _limits = limits;
+        _limits.Validate();
         _userId = options.UserId;
     }
 
@@ -30,6 +31,8 @@ public sealed class GoogleGmailAttachmentClient : IEmailAttachmentClient
         EmailAttachment attachment,
         CancellationToken cancellationToken = default)
     {
+        EnsureWithinOpenedLimit($"attachment {attachment.Id}", attachment.Size ?? attachment.EmbeddedContent?.Length);
+
         if (attachment.EmbeddedContent is { } embeddedContent)
         {
             return new ReadOnlyMemoryStream(embeddedContent);

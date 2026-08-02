@@ -60,13 +60,18 @@ Read-only and modify tokens are stored under different client/user/scope namespa
 
 ## Content Limits
 
-Gmail messages are read with `format=FULL`. The reader parses text bodies and attachment metadata, but large attachment bytes are lazy and are not stored in `EmailMessage.Attachments` during `IEmailReader.GetAsync`.
+Gmail messages are preflighted with `format=METADATA` before `format=FULL`. The reader parses text bodies and attachment metadata, but large attachment bytes are lazy and are not stored in `EmailMessage.Attachments` during `IEmailReader.GetAsync`.
 
 Default resource limits:
 
 - `MaxTextBodyBytes`: 4 MiB
 - `MaxEmbeddedAttachmentBytes`: 256 KiB
+- `MaxTotalEmbeddedAttachmentBytes`: 8 MiB
 - `MaxOpenedAttachmentBytes`: 32 MiB
+- `MaxAttachmentCount`: 256
+- `MaxMimePartCount`: 2048
+- `MaxMimeDepth`: 64
+- `MaxMessageSizeEstimateBytes`: 64 MiB
 
 Override limits before registering Gmail services:
 
@@ -75,6 +80,7 @@ services.AddSingleton(new GmailContentLimitsOptions
 {
     MaxTextBodyBytes = 2 * 1024 * 1024,
     MaxEmbeddedAttachmentBytes = 128 * 1024,
+    MaxTotalEmbeddedAttachmentBytes = 4 * 1024 * 1024,
     MaxOpenedAttachmentBytes = 16 * 1024 * 1024
 });
 ```

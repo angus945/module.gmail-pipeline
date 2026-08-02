@@ -71,9 +71,15 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IGmailServiceAccessor, GmailServiceAccessor>();
         services.TryAddSingleton<IGmailRetryDelay, TaskDelayGmailRetryDelay>();
         services.TryAddSingleton<GmailApiRetryPolicy>();
-        services.TryAddSingleton<GmailContentLimitsOptions>();
+        services.TryAddSingleton(_ =>
+        {
+            var limits = new GmailContentLimitsOptions();
+            limits.Validate();
+            return limits;
+        });
         services.TryAddSingleton<IGmailMessageClient, GoogleGmailMessageClient>();
         services.TryAddSingleton<IGmailMessagePartReader, GmailMessagePartReader>();
+        services.TryAddSingleton<IEmailCharsetResolver, DefaultEmailCharsetResolver>();
         services.TryAddSingleton<GmailMimeParser>();
         services.TryAddSingleton<IGmailMessageMapper, GmailMessageMapper>();
     }
