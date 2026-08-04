@@ -1,7 +1,8 @@
 using FluentAssertions;
-using GmailPipeline.Core.Abstractions;
-using GmailPipeline.Core.Models;
-using GmailPipeline.Core.Parsing;
+using GmailPipeline.Core.Api;
+using GmailPipeline.Core.Application.Parsing;
+using GmailPipeline.Core.Contract.Models;
+using GmailPipeline.Core.Contract.Parsing;
 
 namespace GmailPipeline.Core.Test.Parsing;
 

@@ -1,5 +1,6 @@
 using FluentAssertions;
-using GmailPipeline.Google.Authentication;
+using GmailPipeline.Google.Application.Ports;
+using GmailPipeline.Google.Infrastructure.Authentication;
 using Google.Apis.Gmail.v1;
 using Google.Apis.Services;
 

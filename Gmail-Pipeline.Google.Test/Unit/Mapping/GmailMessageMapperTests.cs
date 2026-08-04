@@ -1,6 +1,6 @@
 using FluentAssertions;
-using GmailPipeline.Google.Mapping;
-using GmailPipeline.Google.Mime;
+using GmailPipeline.Google.Infrastructure.Mapping;
+using GmailPipeline.Google.Infrastructure.Mime;
 using Google.Apis.Gmail.v1.Data;
 
 namespace GmailPipeline.Google.Test.Unit.Mapping;
@@ -33,7 +33,7 @@ public sealed class GmailMessageMapperTests
             "Statement",
             null,
             [],
-            [new GmailPipeline.Core.Models.EmailBodySection
+            [new GmailPipeline.Core.Contract.Models.EmailBodySection
             {
                 MediaType = "text/plain",
                 Content = "Statement",

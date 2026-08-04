@@ -1,6 +1,7 @@
 using System.Net;
 using FluentAssertions;
-using GmailPipeline.Google.Clients;
+using GmailPipeline.Google.Application.Ports;
+using GmailPipeline.Google.Infrastructure.Clients;
 using Google;
 using Google.Apis.Requests;
 

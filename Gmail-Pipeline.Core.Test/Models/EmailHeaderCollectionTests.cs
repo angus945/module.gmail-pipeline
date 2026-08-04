@@ -1,5 +1,5 @@
 using FluentAssertions;
-using GmailPipeline.Core.Models;
+using GmailPipeline.Core.Contract.Models;
 
 namespace GmailPipeline.Core.Test.Models;
 

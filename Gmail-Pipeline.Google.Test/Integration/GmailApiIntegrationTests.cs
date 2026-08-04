@@ -1,7 +1,7 @@
-using GmailPipeline.Core.Abstractions;
-using GmailPipeline.Core.Labels;
-using GmailPipeline.Core.Search;
-using GmailPipeline.Google.DependencyInjection;
+using GmailPipeline.Core.Api;
+using GmailPipeline.Core.Contract.Labels;
+using GmailPipeline.Core.Contract.Search;
+using GmailPipeline.Google.Api;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailPipeline.Google.Test.Integration;

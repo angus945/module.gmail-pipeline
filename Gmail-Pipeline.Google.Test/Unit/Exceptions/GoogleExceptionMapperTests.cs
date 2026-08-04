@@ -1,7 +1,7 @@
 using System.Net;
 using FluentAssertions;
-using GmailPipeline.Core.Exceptions;
-using GmailPipeline.Google.Exceptions;
+using GmailPipeline.Core.Contract.Exceptions;
+using GmailPipeline.Google.Infrastructure.Exceptions;
 using Google;
 using Google.Apis.Requests;
 

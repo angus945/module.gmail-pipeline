@@ -1,8 +1,7 @@
 using FluentAssertions;
-using GmailPipeline.Core.Abstractions;
-using GmailPipeline.Core.DependencyInjection;
-using GmailPipeline.Core.Models;
-using GmailPipeline.Core.Parsing;
+using GmailPipeline.Core.Api;
+using GmailPipeline.Core.Contract.Models;
+using GmailPipeline.Core.Contract.Parsing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailPipeline.Core.Test.DependencyInjection;

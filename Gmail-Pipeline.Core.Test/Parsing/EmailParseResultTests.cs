@@ -1,5 +1,5 @@
 using FluentAssertions;
-using GmailPipeline.Core.Parsing;
+using GmailPipeline.Core.Contract.Parsing;
 
 namespace GmailPipeline.Core.Test.Parsing;
 

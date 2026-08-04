@@ -7,14 +7,36 @@ Reusable .NET Gmail access and email parsing pipeline module.
 
 ## Projects
 
-- `Gmail-Pipeline.Core`: provider-neutral email models, search models, labels, parser contracts, parser resolver, and pipeline executor.
-- `Gmail-Pipeline.Google`: Google Gmail API adapter, installed-app OAuth, MIME mapping, attachment streams, label mutation, and DI registration.
+- `Gmail-Pipeline.Core`: provider-neutral module API, interaction contracts, parser resolver, and pipeline executor.
+- `Gmail-Pipeline.Google`: internal Google Gmail provider adapter for Core API ports, installed-app OAuth, MIME mapping, attachment streams, label mutation, and DI registration.
 
 The module does not include workers, schedulers, databases, finance rules, fixed labels, or fixed Gmail queries. Applications decide when to search, how to store data, and what business parsers to run.
+
+## Architecture
+
+Both projects are organized by Clean Architecture layer:
+
+- `Domain/Contract`: external interaction contracts such as email models, search requests, labels, parsing results, exceptions, and Google options.
+- `Application`: provider-neutral use cases and orchestration.
+- `Presentation/Api`: external call interfaces and registration entrypoints.
+- `Infrastructure`: provider implementation details.
+
+External applications should depend on:
+
+- `GmailPipeline.Core.Api`
+- `GmailPipeline.Core.Contract.*`
+- `GmailPipeline.Google.Api`
+- `GmailPipeline.Google.Contract`
+
+`GmailPipeline.Google.Infrastructure.*` is intentionally treated as provider internals. `Gmail-Pipeline.Google` depends on `Gmail-Pipeline.Core`; the reverse dependency is not allowed.
 
 ## Read-Only Usage
 
 ```csharp
+using GmailPipeline.Core.Api;
+using GmailPipeline.Core.Contract.Search;
+using GmailPipeline.Google.Api;
+
 services.AddGmailPipelineGoogleReadOnly(options =>
 {
     options.ClientSecretPath = @"%LOCALAPPDATA%\GmailPipeline\auth\client_secret.json";
@@ -46,6 +68,9 @@ Composite MIME entities, including `multipart/*` attachments and encapsulated `m
 ## Label Modify Usage
 
 ```csharp
+using GmailPipeline.Core.Api;
+using GmailPipeline.Google.Api;
+
 services.AddGmailPipelineGoogleModify(options =>
 {
     options.ClientSecretPath = @"%LOCALAPPDATA%\GmailPipeline\auth\client_secret.json";
@@ -84,6 +109,8 @@ Default resource limits:
 Override limits before registering Gmail services:
 
 ```csharp
+using GmailPipeline.Google.Contract;
+
 services.AddSingleton(new GmailContentLimitsOptions
 {
     MaxTextBodyBytes = 2 * 1024 * 1024,
@@ -102,6 +129,9 @@ The default `InstalledAppCredentialProvider` loads an installed-app OAuth client
 For non-Windows hosts, register a custom `IGmailTokenStoreFactory` before calling the DI extension. For non-interactive or hosted flows, register a custom `IGmailCredentialProvider` or use:
 
 ```csharp
+using GmailPipeline.Google.Api;
+using GmailPipeline.Google.Contract;
+
 services.AddGmailPipelineGoogleReadOnlyWithCredentialProvider<CustomProvider>(options =>
 {
     options.ClientSecretPath = "/secure/client_secret.json";

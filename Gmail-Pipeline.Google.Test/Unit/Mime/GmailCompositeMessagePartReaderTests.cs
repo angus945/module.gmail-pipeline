@@ -1,10 +1,12 @@
 using System.Text;
 using FluentAssertions;
-using GmailPipeline.Core.Models;
-using GmailPipeline.Core.Search;
-using GmailPipeline.Google.Authentication;
-using GmailPipeline.Google.Clients;
-using GmailPipeline.Google.Mime;
+using GmailPipeline.Google.Application.Ports;
+using GmailPipeline.Core.Contract.Models;
+using GmailPipeline.Core.Contract.Search;
+using GmailPipeline.Google.Contract;
+using GmailPipeline.Google.Infrastructure.Authentication;
+using GmailPipeline.Google.Infrastructure.Clients;
+using GmailPipeline.Google.Infrastructure.Mime;
 using Google.Apis.Gmail.v1;
 using Google.Apis.Gmail.v1.Data;
 

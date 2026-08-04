@@ -1,9 +1,11 @@
 using FluentAssertions;
-using GmailPipeline.Core.Exceptions;
-using GmailPipeline.Core.Models;
-using GmailPipeline.Core.Search;
-using GmailPipeline.Google.Authentication;
-using GmailPipeline.Google.Clients;
+using GmailPipeline.Google.Application.Ports;
+using GmailPipeline.Core.Contract.Exceptions;
+using GmailPipeline.Core.Contract.Models;
+using GmailPipeline.Core.Contract.Search;
+using GmailPipeline.Google.Contract;
+using GmailPipeline.Google.Infrastructure.Authentication;
+using GmailPipeline.Google.Infrastructure.Clients;
 using Google.Apis.Gmail.v1;
 using Google.Apis.Gmail.v1.Data;
 

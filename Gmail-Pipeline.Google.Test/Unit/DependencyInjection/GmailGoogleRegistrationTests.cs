@@ -1,7 +1,7 @@
 using FluentAssertions;
-using GmailPipeline.Core.Abstractions;
-using GmailPipeline.Google.Authentication;
-using GmailPipeline.Google.DependencyInjection;
+using GmailPipeline.Core.Api;
+using GmailPipeline.Google.Api;
+using GmailPipeline.Google.Contract;
 using Google.Apis.Gmail.v1;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -50,6 +50,6 @@ public sealed class GmailGoogleRegistrationTests
     }
 
     private static bool IsLegacyMimeParserRegistration(ServiceDescriptor descriptor) =>
-        descriptor.ServiceType.FullName == "GmailPipeline.Google.Mime.GmailMimeParser"
-        || descriptor.ImplementationType is { FullName: "GmailPipeline.Google.Mime.GmailMimeParser" };
+        descriptor.ServiceType.FullName == "GmailPipeline.Google.Infrastructure.Mime.GmailMimeParser"
+        || descriptor.ImplementationType is { FullName: "GmailPipeline.Google.Infrastructure.Mime.GmailMimeParser" };
 }

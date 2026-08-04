@@ -1,6 +1,6 @@
 using FluentAssertions;
-using GmailPipeline.Core.Exceptions;
-using GmailPipeline.Google.Authentication;
+using GmailPipeline.Core.Contract.Exceptions;
+using GmailPipeline.Google.Infrastructure.Authentication;
 
 namespace GmailPipeline.Google.Test.Unit.Authentication;
 
